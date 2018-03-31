@@ -1,0 +1,75 @@
+<isdecorate template="account/orderhistory/pt_orderhistory">
+    <isinclude template="util/modules"/>
+    <isscript>
+    var orderList = require('cog_storefront_core/cartridge/scripts/newsletter/LoyaltyIntegration3.js').getOrderHistory(pdict.CurrentCustomer.profile.email);
+    orderList = new dw.util.ArrayList(orderList);
+    var pagingModel = new dw.web.PagingModel(orderList);
+    </isscript>
+    
+        <div class="orderPageTitle">
+            ${Resource.msg('orders.orderhistory','account',null)}
+        </div>
+
+        <isif condition="${pagingModel.empty}">
+            
+            <div class="no_orders">${Resource.msg('orders.noorders','account',null)}</div>
+        
+        <iselse/>
+            <form action="${URLUtils.httpsContinue()}" method="post" id="${pdict.CurrentForms.orders.htmlName}">
+                <ispagingbar pageurl="${URLUtils.https('Order-History')}" pagingmodel="${pagingModel}"/>                 
+                
+                <div class="results-hits"> 
+                    <isprint value="${StringUtils.formatInteger(showingStart)}"/> - <isprint value="${StringUtils.formatInteger(showingEnd)}"/> of 
+                    <isprint value="${orderList.getLength()}"/> ${Resource.msg('paginginformation.results','search',null)}
+                </div>
+        
+            
+            
+                <isset name="totalOrders" value="" scope="page"/>
+                <isset name="totalDWOrders" value="${orderList.getLength()}" scope="page"/>
+                    
+                    
+            <table id="OrderDetails" class="item-list orderHistoryStatus" >
+            
+                <tr class="header-row"> 
+                    <th class="section-header">${Resource.msg('orders.datelabel','account',null)}</th>
+                    <th class="section-header">${Resource.msg('orders.numberlabel','account',null)}</th>
+                    <th class="section-header">${Resource.msg('orders.items','account',null)}</th>
+                    <th class="section-header">${Resource.msg('orders.total','account',null)}</th>
+                    <th class="section-header orderStatus">${Resource.msg('orderstatusinclude.statuslabel','account',null)}</th>
+                </tr>
+    
+                
+                <isloop items="${orderList}" var="order" status="orderloopstate">                     
+                        <tr class="orderList">
+                            <td class="orderDate"><isprint value="${new Date(order.OrderDate.replace('+00:00', '.000Z'))}" style="DATE_LONG"/></td>
+                            <td class="orderNo">
+                                <button type="submit"  value="${order.OrderNo}" name="${pdict.CurrentForms.orders.show.htmlName}"><isprint value="${order.OrderNo}" /><div class="orderNoDetails">Details ></div></button>
+                            </td>
+                            <td class="orderCount"><isprint value="${order.OrderLines.TotalNumberOfRecords}"  /></td>
+                            <td class="orderDate"><isprint value="${order.OverallTotals.GrandTotal}"/>
+                            <td class="orderStatus">
+                                <isprint value="${order.MaxOrderStatusDesc}"/>
+                            </td>
+                        </tr>
+                        <tr class="mobile-order-status">
+                            <td></td>
+                            <td colspan="3">
+                                <div class="mobile-order-status-value">${Resource.msg('orderstatusinclude.statuslabel','account',null)}: 
+                                    <isprint value="${order.MaxOrderStatusDesc}"/>
+                                </div>
+                            </td>
+                        </tr>
+                        
+                            <iscomment>if we have more than five orders, we use the paging bar</iscomment>
+                            <isif condition="${orderloopstate.count >= (pagingModel.pageSize + 1)}">
+                                <isbreak/>
+                            </isif>
+                </isloop>
+            </div>
+            </table>
+                <ispagingbar pageurl="${URLUtils.https('Order-History')}" pagingmodel="${pagingModel}" />
+        </form>
+        </isif>
+        
+</isdecorate>

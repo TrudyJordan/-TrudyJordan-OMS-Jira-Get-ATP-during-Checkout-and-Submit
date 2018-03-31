@@ -1,0 +1,149 @@
+'use strict';
+
+var LocalServiceRegistry = require('dw/svc/LocalServiceRegistry');
+
+var omsOrderHistoryService = LocalServiceRegistry.createService("order.history.oms.test", {
+	createRequest: function(svc : HTTPService, customerEmail){
+		var requestString = '<Order DocumentType="0001" Action="List" EnterpriseCode="PrivateDeOnline" CustomerEMailID="' + customerEmail + '"/>';
+		var token = "aasdasdasdasdas";
+        svc.setRequestMethod("POST"); 
+        svc.addHeader("Content-Type", "text/xml");
+        
+        var serviceUrl = svc.getURL(); 
+        serviceUrl = dw.util.StringUtils.format(serviceUrl, token);
+        svc.setURL(serviceUrl);
+        
+        return requestString;
+    },
+    
+	parseResponse: function(svc: HTTPService, response: HTTPClient) {
+		return response.object;
+	},
+
+	filterLogMessage: function(msg:String) : String {
+		return msg;
+	},
+	
+	mockCall: function(svc: HTTPService, params) {
+		return {
+			statusCode: 200,
+			statusMessage: "Success",
+			object: {
+    "FirstOrderHeaderKey": "201710131448314893616",
+    "TotalNumberOfRecords": "2",
+    "LastOrderHeaderKey": "201710131555534895352",
+    "ReadFromHistory": "",
+    "Order": [{
+            "OrderDate": "2017-10-13T14:48:31+00:00",
+            "CustomerFirstName": "Jane3",
+            "OrderNo": "2017101303",
+            "CustomerLastName": "Doe",
+            "OverallTotals":
+
+            {
+                "HdrTotal": "0.00",
+                "GrandTax": "3.40",
+                "LineSubTotal": "59.94",
+                "HdrCharges": "0.00",
+                "GrandShippingTotal": "0.00",
+                "GrandCharges": "0.00",
+                "HdrTax": "0.00",
+                "HdrDiscount": "0.00",
+                "GrandTotal": "63.34",
+                "GrandDiscount": "0.00"
+            },
+            "CustomerPhoneNo": "3304633471",
+            "CustomerEMailID": "Jane3.doe@def.com",
+            "OrderLines":
+
+            {
+                "TotalNumberOfRecords": "2"
+            },
+            "MaxOrderStatusDesc": "Ready for Shipping",
+            "MaxOrderStatus": "3350.080",
+            "PersonInfoBillTo":
+
+            {
+                "EMailID": "Jane3.doe@def.com",
+                "Country": "US",
+                "DayPhone": "3304633471",
+                "LastName": "Doe",
+                "ZipCode": "44236",
+                "City": "Hudson",
+                "MiddleName": "",
+                "State": "OH",
+                "PersonID": "",
+                "FirstName": "Jane3",
+                "EveningPhone": "",
+                "MobilePhone": "",
+                "AddressLine1": "5555 Darrow Road",
+                "AddressLine2": ""
+            }
+        },
+        {
+            "OrderDate": "2017-10-13T15:55:53+00:00",
+            "CustomerFirstName": "Jane3",
+            "OrderNo": "2017101313",
+            "CustomerLastName": "Doe",
+            "OverallTotals":
+
+            {
+                "HdrTotal": "0.00",
+                "GrandTax": "3.40",
+                "LineSubTotal": "59.94",
+                "HdrCharges": "0.00",
+                "GrandShippingTotal": "0.00",
+                "GrandCharges": "0.00",
+                "HdrTax": "0.00",
+                "HdrDiscount": "0.00",
+                "GrandTotal": "63.34",
+                "GrandDiscount": "0.00"
+            },
+            "CustomerPhoneNo": "3304633471",
+            "CustomerEMailID": "Jane3.doe@def.com",
+            "OrderLines":
+
+            {
+                "TotalNumberOfRecords": "2"
+            },
+            "MaxOrderStatusDesc": "Picked up by Customer",
+            "MaxOrderStatus": "3700.002",
+            "PersonInfoBillTo":
+
+            {
+                "EMailID": "Jane3.doe@def.com",
+                "Country": "US",
+                "DayPhone": "3304633471",
+                "LastName": "Doe",
+                "ZipCode": "44236",
+                "City": "Hudson",
+                "MiddleName": "",
+                "State": "OH",
+                "PersonID": "",
+                "FirstName": "Jane3",
+                "EveningPhone": "",
+                "MobilePhone": "",
+                "AddressLine1": "5555 Darrow Road",
+                "AddressLine2": ""
+            }
+        }
+    ],
+    "TotalOrderList": "2",
+    "LastRecordSet": "Y"
+            }
+		};
+	}
+});
+
+
+function getOrderHistory(customerEmail) {
+	try {
+		var response = omsOrderHistoryService.call(customerEmail);
+		return response.object.hasOwnProperty('Order') ? response.object.Order : new dw.util.ArrayList();
+	} catch (e) {
+		return new dw.util.ArrayList();
+	}
+}
+
+
+module.exports.getOrderHistory = getOrderHistory;
