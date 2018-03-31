@@ -1,0 +1,472 @@
+/**
+ * ValidateCartForCheckout.ds
+ *
+ * This script implements a typical shopping cart checkout validation. 
+ * The script is provided with the Demandware reference application. Some 
+ * parts of the validation script are specific to the reference application
+ * logic and might not be applicable to our customer's storefront applications.
+ * However, the shopping cart validation script can be customized to meet 
+ * specific needs and requirements.
+ * 
+ * The script implements the validation of the shopping cart against specific
+ * conditions. This includes the following steps:
+ * - validate that total price is not N/A
+ * - validate that all products in the basket are still in site catalog and online
+ * - validate that all coupon codes in the basket are valid
+ * - validate that the taxes can be calculated for all products in the basket (if ValidateTax in put paramter is true)
+ *
+ * @input  Basket : dw.order.Basket
+ * @input  ValidateTax : Boolean
+ * @output BasketStatus : dw.system.Status
+ * @output EnableCheckout : Boolean
+ * @output StoreProductsMatrix : dw.util.HashMap
+ */
+
+importPackage( dw.campaign ); 
+importPackage( dw.catalog ); 
+importPackage( dw.order );
+importPackage( dw.system );
+importPackage( dw.util );
+importPackage( dw.value );
+importPackage( dw.web );
+importScript( "int_storeinventory:util/GetInventory.ds" );
+/**
+ * Function: execute
+ *
+ * Main function of the validation script. 
+ */
+function execute( pdict : PipelineDictionary ) : Number
+{
+    // ===================================================
+	// =====     	PROCESS INPUT PARAMETERS 		 ===== 
+    // ===================================================
+	
+	var basket : Basket = pdict.Basket;
+	if(basket == null)
+	{
+		pdict["BasketStatus"] = new Status(Status.ERROR);
+		return PIPELET_ERROR;
+	}
+	var validateTax : Boolean = pdict.ValidateTax;
+
+    // ===================================================
+	// =====   VALIDATE PRODUCT EXISTENCE            ===== 
+    // ===================================================
+	// Check if all products in basket can still be resolved
+	// and are online
+	
+	var productExistence = validateProductExistence(basket, pdict);
+	
+	// ===================================================
+	// =====   VALIDATE STORE INVENTORY            ===== 
+    // ===================================================
+	// Check if all products in ship to store shipments has 
+	// inventory at stores
+	
+	if (true) {
+		var storeinventoryforshipments = validateInventory(basket, pdict);
+	} else {
+		var storeinventoryforshipments = validateStoreInventory(basket, pdict);
+	}
+	
+    // ===================================================
+	// =====             VALIDATE CONTENT            ===== 
+    // ===================================================
+	// Check if basket contains products or gift certificates
+	var hasContent = validateContent(basket);
+	
+	//Check quantity values
+	var productQuantity = validateProductQuantity(basket, pdict);
+	
+	//Validate JClass time and date
+	var jclassDateCheck = validateJclassDate(basket, pdict);
+	
+    // ===================================================
+	// =====    CHECK MERCHANDIZE TOTAL NET PRICE   ====== 
+    // ===================================================
+
+	// Checks the availability of the basket's merchandize
+	// total price (net or gross depending on taxation policy)
+	var pricesAvailable = basket.merchandizeTotalPrice.available;
+	
+    // ===================================================
+	// =====             VALIDATE COUPONS           ====== 
+    // ===================================================	
+	var allCouponsValid = validateCoupons(basket, pdict);
+	
+	// ===================================================
+	// =====             VALIDATE TAXES             ====== 
+    // ===================================================	
+	var hasTotalTax : Boolean = true;
+	if (validateTax != null && validateTax == true)
+	{
+		hasTotalTax = basket.totalTax.available;
+	}
+	
+	// ===================================================
+	// =====     VALIDATE PRODUCT SHIP LOCATION     ====== 
+    // ===================================================	
+	var hasProductPOMismatch = getProductPOMismatch(basket, pdict);
+	
+	
+    // ===================================================
+	// =====           EVALUATE CONDITIONS           =====
+    // ===================================================
+    
+	if(!pricesAvailable || !productExistence || !productQuantity)
+	{
+		// there are either any product line items without existing 
+		// product or one or more line items has no price
+		pdict["BasketStatus"] = new Status(Status.ERROR);
+		return PIPELET_ERROR;
+	}
+	else if(!storeinventoryforshipments){
+		//Store inventory available is less than qty requested
+		return PIPELET_ERROR;
+	}
+	else if(!jclassDateCheck){
+		pdict["BasketStatus"] = new Status(Status.ERROR, "JClassDateError");
+		return PIPELET_ERROR;
+	}
+	else if (jclassDateCheck == "Within48"){
+		pdict["BasketStatus"] = new Status(Status.ERROR, "48hourWaring");
+		return PIPELET_ERROR;
+	}
+	else if(productQuantity == 'min/max')
+	{
+		// requesting more product than max quantity
+		pdict["BasketStatus"] = new Status(Status.ERROR, "Quantity Error");
+		return PIPELET_ERROR;
+	}
+	else if(!allCouponsValid)
+	{
+		// there are invalid coupon line items.
+		// exit with an error.
+		pdict["BasketStatus"] = new Status(Status.ERROR, "CouponError");
+		return PIPELET_ERROR;
+	}
+	else if(!hasContent)
+	{
+		// there are neither products nor gift certificates in the 
+		// basket; we exit with an error however the basket status is OK
+		pdict["BasketStatus"] = new Status(Status.OK);
+		return PIPELET_ERROR;
+	}
+	else if (!hasTotalTax)
+	{
+		pdict["BasketStatus"] = new Status(Status.ERROR, "TaxError");
+		return PIPELET_ERROR;
+	}
+
+	else if (hasProductPOMismatch)
+	{
+		pdict["BasketStatus"] = new Status(Status.ERROR, "POBoxError");
+		return PIPELET_ERROR;
+	}
+
+
+    // ===================================================
+	// =====            DONE                         =====
+    // ===================================================
+	
+	pdict["BasketStatus"] = new Status(Status.OK);
+    return PIPELET_NEXT;
+}
+
+/**
+ * FUNCTION: validateProductExistence
+ */
+function validateProductExistence(basket : Basket, pdict : PipelineDictionary)
+{
+	var quantityOverflow : Boolean = true;
+	var plis : Iterator = basket.getProductLineItems().iterator();
+	var defaultShippingID : String = dw.system.Site.getCurrent().preferences.custom.DefaultShippingID;
+	
+	while(plis.hasNext())
+	{
+		var pli : ProductLineItem = plis.next();
+		//If we are shipping this item to store, ignore web inventory check
+		if(empty(pli.shipment.custom.fromStoreId) || pli.shipment.custom.fromStoreId == defaultShippingID){
+			if(pli.product == null || !pli.product.online)
+			{
+				return false;
+			}
+			
+			// RAP-116 : if atleast one of the products is out of stock, don't allow checkout 		
+			var availabilityLevels : ProductAvailabilityLevels = pli.product.getAvailabilityModel().getAvailabilityLevels(pli.quantityValue);
+			quantityOverflow = quantityOverflow && (availabilityLevels.getNotAvailable().value == 0);
+		}
+	}
+	pdict.EnableCheckout = quantityOverflow;
+	
+	return true;
+}
+
+/**
+ * FUNCTION: validateStoreInventory
+ */
+function validateStoreInventory(basket : Basket, pdict : PipelineDictionary)
+{
+	var SPCOMBO : Object;
+	var StoreProductsArray : Object;
+	var jsonString : Array = [];
+	var results : HashMap = new HashMap();
+	var storeAvailabilityMap : HashMap = new HashMap();
+	var StoreProductsRequest : String = "";
+	var defaultShippingID : String = dw.system.Site.getCurrent().preferences.custom.DefaultShippingID;
+	var limitedStockNum : Number = dw.system.Site.getCurrent().preferences.custom.limitedStockNum;
+	
+	//check for empty shipments first
+	if (!empty(basket.shipments)){
+		for each(var ship in basket.shipments){
+			//If we are shipping this item to store, we need to get the inventory for that item at STORE
+			if (!empty(ship.custom.fromStoreId) && ship.custom.fromStoreId != defaultShippingID && ship.productLineItems.length>0){
+				var articles = [];
+				var json = 	{REQUEST_DATA: []};
+				for each(var prod in ship.productLineItems){
+					var prodid : String = prod.productID;
+						articles.push(prodid);
+				}
+						
+				var builddata = {
+		  			SITE: ship.custom.fromStoreId,
+		  			ARTICLE: articles
+		  		};
+				
+				json.REQUEST_DATA.push(builddata);
+						
+				if (SPCOMBO == null){
+					StoreProductsArray = json;
+				} else {
+					var len = SPCOMBO.REQUEST_DATA.length;
+					SPCOMBO.REQUEST_DATA[len] = json.REQUEST_DATA[0];
+					StoreProductsArray = SPCOMBO;
+				}
+				
+				SPCOMBO = StoreProductsArray;
+			}
+		}
+	}
+	
+	//jsonString.push(JSON.stringify(StoreProductsArray));
+	if (StoreProductsArray != null){
+		
+	StoreProductsRequest = JSON.stringify(StoreProductsArray);
+	results = getMultipleProductsInventory(StoreProductsRequest);
+	
+	var EnableCheckoutStore : Boolean = true;
+	var EnableCheckoutWeb : Boolean = pdict.EnableCheckout;
+	
+	storeAvailabilityMap = results.get("INVENTORY");
+	
+		if (basket.shipments != null){
+			for each( var ship in basket.shipments)
+			{
+				if (!empty(ship.custom.fromStoreId) && ship.custom.fromStoreId != defaultShippingID){
+					var sid = ship.custom.fromStoreId;
+				
+					for each(var prod in ship.productLineItems){
+						var hKey = sid + prod.productID;
+						var availInventory : Object = storeAvailabilityMap.get(hKey);
+						var prodqty = prod.quantityValue;
+				
+						availInventory.availability = "1";
+						if((parseInt(availInventory.INVQTY, 10) <  parseInt(prodqty, 10)) || parseInt(availInventory.INVQTY, 10) == limitedStockNum){
+							pdict.EnableCheckout = false;
+				   			availInventory.availability = "-1";
+				   			EnableCheckoutStore = false;
+						}
+						storeAvailabilityMap.put(hKey, availInventory);
+					}
+				}
+			}
+			pdict.StoreProductsMatrix = storeAvailabilityMap;
+			
+			if(EnableCheckoutStore && EnableCheckoutWeb){
+				pdict.EnableCheckout = true;
+			}
+			
+			if (pdict.EnableCheckout != null && pdict.EnableCheckout == false){
+				return false;
+			}else{
+				return true;
+			}
+  	}
+  }
+	return true;
+}
+
+function validateInventory(basket : Basket, pdict : PipelineDictionary) {
+	var isInventoryAvailable = requre('').validateBasketInventory(basket);
+	if (isInventoryAvailable) {
+		return true;
+	} else {
+		return false;
+	}
+	return true;
+}
+
+/**
+ * FUNCTION: validateJclassDate
+ */
+function validateJclassDate(basket : Basket, pdict : PipelineDictionary)
+{
+	var plis : Iterator = basket.getProductLineItems().iterator();
+	while(plis.hasNext())
+	{
+		var pli : ProductLineItem = plis.next();
+		  				
+		if(!empty(pli.product.custom.prod_type) && pli.product.custom.prod_type.value == 'Class' && pli.product.custom.sales_channel.value == 'S')
+		{
+			var jClassInfo = JSON.parse(pli.custom.jClassInfo);
+			var datelist : Array = jClassInfo.classInfo.date;
+			var regex = RegExp("[^\\u0000-\\u007F]", "g"); //Stripping out Unicode chars in date
+			var classStr : String = datelist.toString().replace(regex, "");
+			var classCal : dw.util.Calendar = dw.util.Calendar();
+			var currentCal : dw.util.Calendar = dw.util.Calendar();								
+			classCal.parseByFormat(classStr, "E, MMM dd, yyyy, hh:mm a");			
+			
+			var calCompare : Number = currentCal.compareTo(classCal);
+			
+			if(calCompare > -1){
+				pdict.EnableCheckout = false;
+				return false;
+			}else{
+				classCal.add(dw.util.Calendar.DAY_OF_MONTH, -2); //subtract 48hrs or 2 days
+				calCompare = currentCal.compareTo(classCal);
+				if(calCompare > -1){
+					pdict.EnableCheckout = false;
+					return 'Within48';
+				}
+			}
+		}
+	}
+	
+	return true;
+}
+
+/**
+ * FUNCTION: validateProductQuantity
+ */
+function validateProductQuantity(basket : Basket, pdict : PipelineDictionary)
+{
+	var plis : Iterator = basket.getProductLineItems().iterator();
+	while(plis.hasNext())
+	{
+		var pli : ProductLineItem = plis.next();
+		var maxMinQty : Number = 1;
+		var promoCol : Collection = dw.campaign.PromotionMgr.activeCustomerPromotions.getProductPromotions(pli.product);
+		var defaultShippingID : String = dw.system.Site.getCurrent().preferences.custom.DefaultShippingID;
+		var isJClass : Boolean = pli.product.custom.sales_channel.value == 'S' && pli.product.custom.prod_type.value == 'Class' ? true : false;
+		for each (var promoObj in promoCol){
+			
+			try {
+				if (promoObj.custom.minQtyRequired.valueOf()) {
+	 				if (maxMinQty < promoObj.custom.minQty) {
+	  					maxMinQty = promoObj.custom.minQty;
+	 				}
+				}
+			}				
+   			catch (e) {
+    			Logger.debug("Exception in validateProductQuantity:" + e);
+   			}
+ 			
+		}
+  		if (maxMinQty > 1) {
+   			pli.setMinOrderQuantityValue(maxMinQty);
+   		}
+   		
+		var ignoreMaxQty = 'ignoreMaxQty' in dw.system.Site.current.preferences.custom && Site.current.preferences.custom.ignoreMaxQty;
+		
+		if(pli.product == null || (pli.product.custom.sales_channel.value == 'S' && pli.shipment.custom.fromStoreId == defaultShippingID && isJClass == false ) 
+		|| !ignoreMaxQty && (!empty(pli.product.custom.maxQuanityAllowed) && pli.quantity.value > pli.product.custom.maxQuanityAllowed) 
+		|| pli.quantity.value < pli.minOrderQuantity.value)
+		{
+			pdict.EnableCheckout = false;
+			
+			if(!empty(pli.product.custom.maxQuanityAllowed) && pli.quantity.value > pli.product.custom.maxQuanityAllowed || pli.quantity.value < pli.minOrderQuantity.value){
+				return 'min/max';
+			} else {
+				return false;
+			}
+		}
+	}
+	
+	return true;
+}
+
+/**
+ * FUNCTION: validateContent
+ */
+function validateContent(basket : Basket)
+{
+	var plis : Collection = basket.getProductLineItems();
+	var gclis : Collection = basket.getGiftCertificateLineItems();
+	
+	if(plis.size() == 0 && gclis.size() == 0)
+	{
+		return false;
+	}
+	
+	return true;
+}
+
+/**
+ * FUNCTION: validateCoupons
+ */
+function validateCoupons(basket : Basket, pdict : PipelineDictionary)
+{
+	var clis : Iterator = basket.getCouponLineItems().iterator();
+	
+	while (clis.hasNext())
+	{
+		var cli : CouponLineItem = clis.next();
+		if (! cli.isValid())
+		{
+			return false;
+		}
+	}
+	
+	return true;
+}
+
+/**
+ * FUNCTION: getProductPOMismatch
+ * Returns false if everything is all good,
+ * true if a hazardous product and/or drop ship product exists and a PO Box is used
+ * Drop Ship products was included with Mar 25th 2015 release - SMallika
+ */
+function getProductPOMismatch( basket : Basket, pdict : PipelineDictionary ) {
+	if( !empty( basket.shipments[0] )) {
+		var defaultShipment : Shipment = basket.getDefaultShipment();
+		var shippingAddress : OrderAddress = defaultShipment.getShippingAddress();
+		//var poboxStringMatch : String = "[P|p]+[.]?[ ]?[O|o]+[.]?[ ]?[box|BOX]?";
+		//var poboxStringMatch1 : String = "^\s*[P|p][.]?\s*?[O|o][.]?\s*?\bbox\b";
+		//var poboxStringMatch1 : String = "^\s*(/?i)p[.]?\s*?(/?i)o[.]?\s*?(/?i)\bbox\b";
+		//var poboxStringMatch2 : String = "^\s*(/?i)p[.]?\s*?(/?i)o[.]?\s*?";
+		//var poboxStringMatch3 : String = "^\s*(\?i)\bbox\b";
+		
+		var regex : RegExp = /^\s*[P|p][.]?\s*[O|o][.]?\s*/;
+		if (shippingAddress != null && shippingAddress.address1 != null){
+			//if (shippingAddress.address1.match(poboxStringMatch3) || shippingAddress.address1.match(poboxStringMatch1) || shippingAddress.address1.match(poboxStringMatch2)) {
+				if (regex.test(shippingAddress.address1)) {
+				var plis : Iterator = basket.getAllProductLineItems().iterator();
+		
+				while ( plis.hasNext() ) {
+					var pli : ProductLineItem = plis.next();
+					if( !empty( pli.product ) ) {
+						if  (pli.product.custom.prod_type == 'Product'){
+							if ( (!empty( pli.product.custom.is_hazardous ) && pli.product.custom.is_hazardous == true) || 
+				     		 	(!empty( pli.product.custom.web_source ) && pli.product.custom.web_source == 'D' ) ) {
+									pdict.EnableCheckout = false;
+									return true;
+							}
+						}
+					}
+				}
+			}
+	
+			return false;
+		}
+	}
+}

@@ -1,0 +1,100 @@
+'use strict';
+
+var LocalServiceRegistry = require('dw/svc/LocalServiceRegistry');
+
+var omsATPService = LocalServiceRegistry.createService("order.history.oms.test", {
+	createRequest: function(svc : HTTPService, requestObject, storeId){
+		var token = "aasdasdasdasdas";
+        svc.setRequestMethod("POST"); 
+        svc.addHeader("Content-Type", "text/xml");
+        
+        var serviceUrl = svc.getURL(); 
+        serviceUrl = dw.util.StringUtils.format(serviceUrl, token);
+        svc.setURL(serviceUrl);
+        
+        return buildRequestString(requestObject, storeId);
+    },
+    
+	parseResponse: function(svc: HTTPService, response: HTTPClient) {
+		return response.object;
+	},
+
+	filterLogMessage: function(msg:String) : String {
+		return msg;
+	}
+});
+
+
+function validateBasketInventory(basket) {
+	try {
+		var requestObject = buildRequestObject(basket);
+		if (requestObject.storeItems.length) {
+		  var storeItemsResponse = omsATPService.call(requestObject.storeItems, requestObject.storeId);
+		  return validateResponse(storeItemsResponse);
+		}
+		if (requestObject.deliveryItems.length) {
+          var deliveryItemsRespone = omsATPService.call(requestObject.deliveryItems);
+          return validateResponse(deliveryItemsRespone, null);
+        }
+		return true;
+	} catch (e) {
+		return true;
+	}
+}
+
+function buildRequestObject(basket) {
+    var defaultShippingID = dw.system.Site.getCurrent().preferences.custom.DefaultShippingID;
+    var limitedStockNum = dw.system.Site.getCurrent().preferences.custom.limitedStockNum;
+    var requestObject = {
+               "storeItems": [],
+               "deliveryItems": [],
+               "storeId": null    
+        };
+    //check for empty shipments first
+    if (!empty(basket.shipments)){
+        for each(var shipment in basket.shipments){
+            //If we are shipping this item to store, we need to get the inventory for that item at STORE
+            if (!empty(shipment.custom.fromStoreId) && shipment.custom.fromStoreId != defaultShippingID && shipment.productLineItems.length > 0){
+                for each(var productLineItem in ship.productLineItems){
+                	var itemObject = {};
+                    itemObject.itemId = productLineItem.productID;
+                    itemObject.qty = productLineItem.getQuantityValue();
+                    itemObject.UOM = productLineItem.getProduct().custom...//to be finalized
+                    requestObject.storeItems.push(itemObject);  
+                }        
+                requestObject.storeId = ship.custom.fromStoreId;                
+            } else {
+                for each(var productLineItem in ship.productLineItems){
+                	var itemObject = {};
+                    itemObject.itemId = productLineItem.productID;
+                    itemObject.qty = productLineItem.getQuantityValue();
+                    itemObject.UOM = productLineItem.getProduct().custom...//to be finalized
+                    requestObject.deliveryItems.push(itemObject);
+                }               
+            }
+        }
+        return requestObject;
+    }
+    
+    return requestObject;
+}
+
+function buildRequestString(requestObject, storeId) {
+	var requestString = '<Promise CheckInventory="Y" CheckCapacity="Y" OrganizationCode="PrivateDevComOnline"> <PromiseLines>';
+	
+	for (var i=0; i < requestObject.length; i++) {
+	   var itemObject = requestObject[i]
+	   requestString += '<PromiseLine RequiredQty="' + itemObject.qty + '" ItemID="' + itemObject.itemId + '" UnitOfMeasure="' + itemObject.UOM + '" LineId="' + i+1 + '" ProductClass="GOOD" IsPrecut="N">';
+	}
+	
+    requestString += '</PromiseLine> </PromiseLines>';
+    
+    if (storeId) {
+        requestString +='<ShipNodes> <ShipNode Node="' + storeId +'"> </ShipNode> </ShipNodes>';
+    }
+    
+    requestString +='</Promise>';
+}
+
+
+module.exports.validateBasketInventory = validateBasketInventory;
