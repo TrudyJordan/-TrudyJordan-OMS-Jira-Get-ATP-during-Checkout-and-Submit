@@ -1,0 +1,42 @@
+Task:  
+Get ATP (Available to Promise) during Checkout and Submit.
+
+Description:
+Need to pass Unit of Measure into call, will require change in SFCC.
+DWRE Changes required for Inventory Check.
+
+NOTES:
+Adding more details for clarification
+1. The mapping document is available at https://docs.google.com/spreadsheets/d/1bXBGeEZ9SP7sLWEhgbJ_4BHEjeAS64bL7RJKA--netE/edit#gid=141251478
+2. As mentioned in the mapping doc, the fields OrganizationCode, CheckInventory, CheckCapacity, ProductClass can be hardcoded
+3. The field 'LineId' should have a unique value, it is required to differentiate multiple product lines. LineId can have values such as 1, 2, 3 etc
+4. In the response the field "Promise/SuggestedOption/Option/@HasAnyUnavailableQty" can be used to confirm if the requested product has inventory or not.
+The value of the field will be 'Y' if the product inventory is less than the quantity requested.
+
+-------------------------------------------------------
+
+In today's implementation, before placing the order(submitting the order), web service call is made on BOPIS products only to get real-time inventory availability. If any BOPIS articles is out-of-stock at store selected by customer, those articles will be flagged and customer needs to modify the cart.
+
+With OMS, web service call will be made for all articles and depending on the response, we either pass the order & place it or else it should flag for inventory shortage.
+
+OMS has GetATP web service call for getting inventory.
+
+-------------------------------------------------------
+
+Request URL - https://omsdev.privatedevcom.com/smcfs/restapi/executeFlow/PDCGetATP?_loginid=<loginid>&_token=<token>
+
+Request BODY - 
+<Promise CheckInventory="Y" CheckCapacity="Y" OrganizationCode="PrivateDevComOnline">
+<PromiseLines>
+<PromiseLine RequiredQty="1" ItemID=<ArticleID> UnitOfMeasure=<unit of measure> LineId="1" ProductClass="GOOD" IsPrecut="N" >
+</PromiseLine>
+</PromiseLines>
+</Promise>
+
+Example - 
+<Promise CheckInventory="Y" CheckCapacity="Y" OrganizationCode="PrivateDevComOnline">
+<PromiseLines>
+<PromiseLine RequiredQty="1" ItemID="7827850" UnitOfMeasure="YARD" LineId="1" ProductClass="GOOD" IsPrecut="N" >
+</PromiseLine>
+</PromiseLines>
+</Promise>
